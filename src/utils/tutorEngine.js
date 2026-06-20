@@ -18,7 +18,8 @@ const instrumentNames = {
 };
 
 // Knowledge base — each topic offers level-adapted and mode-specific answers.
-const KB = {
+// Exported so Gemini can receive the existing entry as context and supplement it.
+export const KB = {
   oscilloscope: {
     beginner: 'An oscilloscope draws a picture of a signal: voltage going up and down over time. It lets you *see* electricity move.',
     intermediate: 'The oscilloscope plots voltage (vertical) against time (horizontal). Use volts/div and time/div to scale the view so you capture a couple of clean cycles.',
@@ -108,7 +109,7 @@ const TOPIC_KEYWORDS = [
   ['voltmeter', 'voltmeter'], ['voltage', 'multimeter'], ['wave', 'function-generator'],
 ];
 
-const detectTopic = (text, activeInstrument) => {
+export const detectTopic = (text, activeInstrument) => {
   const lower = (text || '').toLowerCase();
   for (const [kw, topic] of TOPIC_KEYWORDS) {
     if (lower.includes(kw)) return topic;

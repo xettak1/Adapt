@@ -8,6 +8,7 @@ import useAppStore from '../../store/useAppStore';
 import {
   respond, contextualTip, walkthrough, levelFromMastery, HINT_LEVELS,
 } from '../../utils/tutorEngine';
+import { askGemini, isGeminiEnabled } from '../../utils/geminiService';
 
 const TEACH_MODES = [
   { id: 'teach', label: 'Teach Me', icon: <GraduationCap size={13} /> },
@@ -47,6 +48,7 @@ const AITutor = ({ bench, activeInstrument, event = null }) => {
     },
   ]);
   const [input, setInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
   const [hintIndex, setHintIndex] = useState(0);
   const [tip, setTip] = useState(null);
   const scrollRef = useRef(null);
@@ -71,9 +73,40 @@ const AITutor = ({ bench, activeInstrument, event = null }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event?.id]);
 
+  const modePrompts = {
+    teach:   `Teach me about the ${instrumentLabel[activeInstrument] || 'workbench'}.`,
+    explain: `Explain what the ${instrumentLabel[activeInstrument] || 'workbench'} does and how to use it.`,
+    why:     `Why is the ${instrumentLabel[activeInstrument] || 'workbench'} important and when do I use it?`,
+    example: `Give me a practical example of using the ${instrumentLabel[activeInstrument] || 'workbench'}.`,
+    simplify:`Explain the ${instrumentLabel[activeInstrument] || 'workbench'} in the simplest terms possible.`,
+    deeper:  `Give me a deep technical explanation of how the ${instrumentLabel[activeInstrument] || 'workbench'} works.`,
+  };
+
+  const pushTutorReply = async (userText, fallbackFn) => {
+    if (!isGeminiEnabled()) {
+      push('tutor', fallbackFn());
+      return;
+    }
+    setIsTyping(true);
+    try {
+      const reply = await askGemini(userText, { ...context, overallMastery }, messages);
+      push('tutor', reply);
+    } catch (err) {
+      if (err.message === 'rate_limited') {
+        push('tutor', `I need a moment — too many questions at once. Try again in ${err.retryIn ?? 30}s, or use the mode buttons for an instant answer.`);
+      } else {
+        console.error('[Gemini] API error:', err);
+        push('tutor', `⚠️ Gemini error: ${err.message}. Falling back to offline tutor.\n\n` + fallbackFn());
+      }
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
   const handleMode = (mode) => {
-    push('student', TEACH_MODES.find((m) => m.id === mode).label + ` · ${instrumentLabel[activeInstrument] || ''}`);
-    setTimeout(() => push('tutor', respond({ mode, context })), 250);
+    const label = TEACH_MODES.find((m) => m.id === mode).label;
+    push('student', label + ` · ${instrumentLabel[activeInstrument] || ''}`);
+    pushTutorReply(modePrompts[mode] || label, () => respond({ mode, context }));
   };
 
   const handleSend = () => {
@@ -81,7 +114,7 @@ const AITutor = ({ bench, activeInstrument, event = null }) => {
     if (!text) return;
     push('student', text);
     setInput('');
-    setTimeout(() => push('tutor', respond({ text, context })), 280);
+    pushTutorReply(text, () => respond({ text, context }));
   };
 
   const handleWalkthrough = () => {
@@ -110,7 +143,12 @@ const AITutor = ({ bench, activeInstrument, event = null }) => {
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-bold text-surface-800 text-sm flex items-center gap-1.5">Lab Tutor <Sparkles size={12} className="text-moss-500" /></p>
-          <p className="text-xs text-surface-400 capitalize">{level} mode · {instrumentLabel[activeInstrument] || 'Workbench'}</p>
+          <p className="text-xs text-surface-400 capitalize">
+            {level} mode · {instrumentLabel[activeInstrument] || 'Workbench'} ·{' '}
+            <span className={isGeminiEnabled() ? 'text-moss-600 font-semibold' : 'text-surface-400'}>
+              {isGeminiEnabled() ? '✦ Gemini' : 'Offline'}
+            </span>
+          </p>
         </div>
       </div>
 
@@ -162,22 +200,36 @@ const AITutor = ({ bench, activeInstrument, event = null }) => {
             </div>
           </motion.div>
         ))}
+        <AnimatePresence>
+          {isTyping && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="flex justify-start">
+              <div className="bg-surface-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
+                {[0, 1, 2].map((i) => (
+                  <motion.span key={i} className="w-1.5 h-1.5 rounded-full bg-surface-400 block"
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Quick actions */}
       <div className="px-3 pt-2 border-t border-surface-100">
         <div className="flex gap-1.5 mb-2 overflow-x-auto no-scrollbar pb-1">
-          <button onClick={handleWalkthrough} className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-moss-100 text-moss-700 hover:bg-moss-200 transition-colors">
+          <button onClick={handleWalkthrough} disabled={isTyping} className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-moss-100 text-moss-700 hover:bg-moss-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             <Compass size={12} /> Guide me
           </button>
-          <button onClick={handleHint} className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors">
+          <button onClick={handleHint} disabled={isTyping} className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             <Lightbulb size={12} /> Hint
           </button>
         </div>
         <div className="grid grid-cols-3 gap-1.5 mb-2">
           {TEACH_MODES.map((m) => (
-            <button key={m.id} onClick={() => handleMode(m.id)}
-              className="flex items-center justify-center gap-1 text-[11px] font-semibold px-1.5 py-1.5 rounded-lg bg-surface-50 text-surface-600 hover:bg-primary-50 hover:text-primary-700 transition-colors">
+            <button key={m.id} onClick={() => handleMode(m.id)} disabled={isTyping}
+              className="flex items-center justify-center gap-1 text-[11px] font-semibold px-1.5 py-1.5 rounded-lg bg-surface-50 text-surface-600 hover:bg-primary-50 hover:text-primary-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
               {m.icon} {m.label}
             </button>
           ))}
@@ -194,7 +246,7 @@ const AITutor = ({ bench, activeInstrument, event = null }) => {
             placeholder="Ask the tutor anything…"
             className="flex-1 bg-transparent text-sm outline-none text-surface-700 placeholder-surface-400 py-1.5"
           />
-          <button onClick={handleSend} disabled={!input.trim()}
+          <button onClick={handleSend} disabled={!input.trim() || isTyping}
             className="w-8 h-8 rounded-xl bg-moss-600 text-white flex items-center justify-center disabled:opacity-40 hover:bg-moss-700 transition-colors flex-shrink-0">
             <Send size={15} />
           </button>

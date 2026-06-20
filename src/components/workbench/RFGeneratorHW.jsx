@@ -1,13 +1,41 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Chassis, Screen, Knob, HwButton, SegmentDisplay, Led } from './hardware';
 import useAnimationTime from '../../hooks/useAnimationTime';
-import { sample, formatFreq, WAVEFORMS, MOD_TYPES, freqToPos, posToFreq } from './benchUtils';
+import { sample, formatFreq, WAVEFORMS, MOD_TYPES, freqToPos, posToFreq, FREQ_MIN, FREQ_MAX } from './benchUtils';
+
+const FREQ_PRESETS = [
+  { label: '1 kHz',   hz: 1_000 },
+  { label: '100 kHz', hz: 100_000 },
+  { label: '1 MHz',   hz: 1_000_000 },
+  { label: '10 MHz',  hz: 10_000_000 },
+  { label: '100 MHz', hz: 100_000_000 },
+  { label: '1 GHz',   hz: 1_000_000_000 },
+];
 
 const W = 460, H = 120;
 const ACCENT = '#38bdf8';
 
 const RFGeneratorHW = ({ bench, setBench }) => {
   const t = useAnimationTime(bench.genOn);
+  const [freqInput, setFreqInput] = useState('');
+
+  const setFrequency = (hz) => {
+    const clamped = Math.round(Math.min(FREQ_MAX, Math.max(FREQ_MIN, hz)));
+    setBench((b) => ({ ...b, frequency: clamped }));
+  };
+
+  const commitFreqInput = () => {
+    if (!freqInput.trim()) { setFreqInput(''); return; }
+    // Accept values like "2.4G", "500M", "10k", or plain Hz numbers
+    const raw = freqInput.trim().toUpperCase();
+    const multipliers = { G: 1e9, M: 1e6, K: 1e3 };
+    const match = raw.match(/^([0-9.]+)\s*([GMK]?)$/);
+    if (match) {
+      const num = parseFloat(match[1]) * (multipliers[match[2]] || 1);
+      if (!isNaN(num)) setFrequency(num);
+    }
+    setFreqInput('');
+  };
   const amp = (bench.amplitude / 4) * (H / 2.4);
   const offsetPx = (bench.offset / 4) * (H / 2.4);
 
@@ -62,12 +90,57 @@ const RFGeneratorHW = ({ bench, setBench }) => {
 
       {/* Knob deck */}
       <div className="flex flex-wrap items-start gap-4 justify-between">
-        <div className="rounded-xl p-3 flex items-start gap-4" style={{ background: 'linear-gradient(#1c2025,#14171a)', border: '1px solid #2a2f34' }}>
-          <Knob label="Frequency" value={freqToPos(bench.frequency)} min={0} max={1} step={0.002}
-            onChange={(p) => setBench((b) => ({ ...b, frequency: Math.round(posToFreq(p)) }))}
-            color={ACCENT} size={72} format={() => formatFreq(bench.frequency)} sublabel="log sweep" />
-          <Knob label="Amplitude" value={bench.amplitude} min={0.05} max={4} step={0.05}
-            onChange={(v) => setBench((b) => ({ ...b, amplitude: v }))} color={ACCENT} size={60} unit=" Vpp" />
+        <div className="rounded-xl p-3 flex flex-col gap-3" style={{ background: 'linear-gradient(#1c2025,#14171a)', border: '1px solid #2a2f34', minWidth: 220 }}>
+          <div className="flex items-start gap-4">
+            <Knob label="Frequency" value={freqToPos(bench.frequency)} min={0} max={1} step={0.002}
+              onChange={(p) => setFrequency(posToFreq(p))}
+              color={ACCENT} size={72} format={() => formatFreq(bench.frequency)} sublabel="drag or scroll" />
+            <Knob label="Amplitude" value={bench.amplitude} min={0.05} max={4} step={0.05}
+              onChange={(v) => setBench((b) => ({ ...b, amplitude: v }))} color={ACCENT} size={60} unit=" Vpp" />
+          </div>
+          {/* Log-scale slider */}
+          <div>
+            <input
+              type="range" min={0} max={1} step={0.001}
+              value={freqToPos(bench.frequency)}
+              onChange={(e) => setFrequency(posToFreq(parseFloat(e.target.value)))}
+              className="w-full cursor-pointer"
+              style={{ accentColor: ACCENT }}
+            />
+            <div className="flex justify-between text-[9px] font-mono mt-0.5" style={{ color: `${ACCENT}88` }}>
+              <span>1 Hz</span><span>1 kHz</span><span>1 MHz</span><span>1 GHz</span><span>6 GHz</span>
+            </div>
+          </div>
+          {/* Direct entry */}
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              value={freqInput}
+              onChange={(e) => setFreqInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && commitFreqInput()}
+              onBlur={commitFreqInput}
+              placeholder={formatFreq(bench.frequency)}
+              className="flex-1 rounded-lg px-2.5 py-1.5 text-xs font-mono outline-none"
+              style={{ background: '#0c1014', border: `1px solid ${ACCENT}44`, color: ACCENT }}
+            />
+            <button onClick={commitFreqInput}
+              className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold"
+              style={{ background: ACCENT, color: '#0a0d0a' }}>SET</button>
+          </div>
+          {/* Preset buttons */}
+          <div className="flex flex-wrap gap-1">
+            {FREQ_PRESETS.map((p) => (
+              <button key={p.label} onClick={() => setFrequency(p.hz)}
+                className="px-2 py-0.5 rounded text-[9px] font-bold transition-colors"
+                style={{
+                  background: bench.frequency === p.hz ? ACCENT : '#1c2530',
+                  color: bench.frequency === p.hz ? '#0a0d0a' : `${ACCENT}bb`,
+                  border: `1px solid ${ACCENT}33`,
+                }}>
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="rounded-xl p-3 flex items-start gap-4" style={{ background: 'linear-gradient(#1c2025,#14171a)', border: '1px solid #2a2f34' }}>
           <Knob label="DC Offset" value={bench.offset} min={-4} max={4} step={0.05}
