@@ -9,11 +9,10 @@ services:
         VITE_USE_MOCK: ${VITE_USE_MOCK:-true}
     ports:
       - "${APP_PORT:-3000}:80"
-    depends_on:
-      db:
-        condition: service_healthy
 
   db:
+    profiles:
+      - frontend
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
